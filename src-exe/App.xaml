@@ -1,0 +1,15 @@
+<Application x:Class="RustFix.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+         <SolidColorBrush x:Key="BgDark" Color="#12100F"/>
+         <SolidColorBrush x:Key="CardBg" Color="#1B1715"/>
+         <SolidColorBrush x:Key="AccentRust" Color="#C75B24"/>
+         <SolidColorBrush x:Key="AccentHover" Color="#E8823F"/>
+         <SolidColorBrush x:Key="TextMain" Color="#EFE7DE"/>
+         <SolidColorBrush x:Key="TextMuted" Color="#8F8379"/>
+         <SolidColorBrush x:Key="BorderColor" Color="#2E2520"/>
+         <SolidColorBrush x:Key="PatinaGreen" Color="#4FA89A"/>
+    </Application.Resources>
+</Application>

@@ -1,0 +1,83 @@
+name: Build RustFix.exe
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Новый тег релиза, например v1.5.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  portable-exe:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate manual release tag
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
+            throw 'Use a new version tag such as v1.5.1'
+          }
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish self-contained Windows EXE
+        shell: pwsh
+        run: |
+          dotnet publish ./src-exe/RustFix.csproj --configuration Release --runtime win-x64 --self-contained true --output ./dist-exe
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
+
+      - name: Verify that the release asset is a single Windows executable
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem ./dist-exe -File)
+          $exe = Join-Path $PWD 'dist-exe/RustFix.exe'
+          if ($files.Count -ne 1 -or $files[0].Name -ne 'RustFix.exe') {
+            throw "Expected a single RustFix.exe; got: $($files.Name -join ', ')"
+          }
+          $stream = [IO.File]::OpenRead($exe)
+          try {
+            if ($stream.ReadByte() -ne 77 -or $stream.ReadByte() -ne 90) {
+              throw 'RustFix.exe is not a Windows PE executable (missing MZ header)'
+            }
+          } finally { $stream.Dispose() }
+          Write-Host "Verified Windows EXE: $([Math]::Round($files[0].Length / 1MB, 1)) MB"
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RustFix-exe
+          path: dist-exe/RustFix.exe
+          if-no-files-found: error
+
+      - name: Publish EXE to GitHub Release
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v3
+        with:
+          name: RustFix ${{ inputs.release_tag || github.ref_name }}
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          files: dist-exe/RustFix.exe
+          fail_on_unmatched_files: true
+          body: |
+            RustFix by yawaside: one self-contained Windows x64 executable (no installer or separate .NET runtime).
+
+            Download RustFix.exe, launch it and approve UAC. It automatically reads the Windows build and scans installed HotFix and CBS packages. It only offers an uninstall attempt for eligible update packages; Windows may refuse permanent packages.
+
+            Target specified for comparison: Windows 11 24H2 / 26100.8894.
+            Telegram: https://t.me/TriagedRust

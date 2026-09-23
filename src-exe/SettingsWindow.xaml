@@ -1,0 +1,89 @@
+<Window x:Class="RustFix.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Настройки и восстановление · RustFix"
+        Height="460" Width="620" MinHeight="420" MinWidth="580"
+        WindowStartupLocation="CenterOwner"
+        Background="#141110" Foreground="#EFE7DE"
+        FontFamily="Segoe UI" FontSize="12">
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <TextBlock Grid.Row="0" Text="ПАРАМЕТРЫ И ОБСЛУЖИВАНИЕ" FontWeight="Bold" FontSize="14" Foreground="#E8823F" Margin="0,0,0,12"/>
+
+        <!-- Tabs -->
+        <TabControl Grid.Row="1" Background="#1B1715" BorderBrush="#2E2520">
+            <!-- TAB 1: PAUSE & DISABLE -->
+            <TabItem Header="Пауза и отключение">
+                <StackPanel Margin="14">
+                    <TextBlock Text="ПРИОСТАНОВКА ОБНОВЛЕНИЙ" FontWeight="Bold" Foreground="#B0A499" Margin="0,0,0,6"/>
+                    <TextBlock Text="Зафиксировать даты паузы в реестре Windows Update:" FontSize="11" Foreground="#8F8379" Margin="0,0,0,8"/>
+                    <UniformGrid Columns="4" Margin="0,0,0,14">
+                        <Button Content="7 дней" Click="BtnPause7_Click" Background="#261F1B" Foreground="#EFE7DE" BorderBrush="#3D322A" Padding="6,6" Margin="2" Cursor="Hand"/>
+                        <Button Content="4 недели" Click="BtnPause28_Click" Background="#261F1B" Foreground="#EFE7DE" BorderBrush="#3D322A" Padding="6,6" Margin="2" Cursor="Hand"/>
+                        <Button Content="35 дней" Click="BtnPause35_Click" Background="#261F1B" Foreground="#EFE7DE" BorderBrush="#3D322A" Padding="6,6" Margin="2" Cursor="Hand"/>
+                        <Button Content="Снять паузу" Click="BtnPause0_Click" Background="#261F1B" Foreground="#8F8379" BorderBrush="#3D322A" Padding="6,6" Margin="2" Cursor="Hand"/>
+                    </UniformGrid>
+
+                    <TextBlock Text="ПОЛНОЕ ОТКЛЮЧЕНИЕ ЦЕНТРА ОБНОВЛЕНИЙ" FontWeight="Bold" Foreground="#B0A499" Margin="0,4,0,6"/>
+                    <CheckBox x:Name="ChkNoAutoUpdate" Content="Запретить автопроверку обновлений (NoAutoUpdate = 1)" IsChecked="True" Foreground="#EFE7DE" Margin="0,3"/>
+                    <CheckBox x:Name="ChkNoReboot" Content="Запретить автоматическую перезагрузку при пользователе" IsChecked="True" Foreground="#EFE7DE" Margin="0,3"/>
+                    <TextBlock Text="Политики зависят от редакции Windows и могут быть переопределены администратором."
+                               TextWrapping="Wrap" FontSize="11" Foreground="#8F8379" Margin="0,7,0,0"/>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button Content="ПРИМЕНИТЬ БЛОКИРОВКИ" Click="BtnApplyPolicies_Click" Background="#C75B24" Foreground="#FFFFFF" FontWeight="Bold" Padding="14,7" BorderThickness="0" Cursor="Hand" Margin="0,0,10,0"/>
+                        <Button Content="Восстановить штатный режим" Click="BtnRestoreDefaults_Click" Background="#163833" Foreground="#4FA89A" BorderBrush="#4FA89A" Padding="12,7" Cursor="Hand"/>
+                    </StackPanel>
+                </StackPanel>
+            </TabItem>
+
+            <!-- TAB 2: REINSTALL / RECOVERY -->
+            <TabItem Header="Если откат не помог">
+                <StackPanel Margin="14">
+                    <Border Background="#261612" BorderBrush="#E07A5F" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,12">
+                        <TextBlock Text="Если Windows запрещает откат или сборка другой ветки, проверьте возможность переустановки Windows 11 24H2. Страница Microsoft не гарантирует выдачу ISO именно 26100.8894."
+                                   TextWrapping="Wrap" Foreground="#EFE7DE" FontSize="11.5"/>
+                    </Border>
+
+                    <TextBlock Text="РЕКОМЕНДУЕМЫЙ ПОРЯДОК ДЕЙСТВИЙ:" FontWeight="Bold" Foreground="#B0A499" Margin="0,0,0,6"/>
+                    <TextBlock Text="1. Перезагрузите ПК и повторите удаление — отложенные блокировки часто спадают после ребута." TextWrapping="Wrap" Foreground="#8F8379" Margin="0,2"/>
+                    <TextBlock Text="2. Запустите в командной строке: dism /online /cleanup-image /restorehealth." TextWrapping="Wrap" Foreground="#8F8379" Margin="0,2"/>
+                    <TextBlock Text="3. Скачайте чистый образ Windows 11 24H2 и запустите setup.exe с сохранением файлов." TextWrapping="Wrap" Foreground="#8F8379" Margin="0,2"/>
+
+                    <Button Content="Страница загрузки Windows 11 (Microsoft) ↗" Click="BtnMsDownload_Click"
+                            Background="#2F7CD1" Foreground="#FFFFFF" FontWeight="Bold" Padding="14,8" BorderThickness="0" Margin="0,14,0,0" HorizontalAlignment="Left" Cursor="Hand"/>
+                </StackPanel>
+            </TabItem>
+
+            <!-- TAB 3: ABOUT -->
+            <TabItem Header="О программе">
+                <StackPanel Margin="14">
+                    <TextBlock Text="RustFix by yawaside" FontWeight="Bold" FontSize="15" Foreground="#FFFFFF"/>
+                    <TextBlock Text="Портативная утилита для Windows 11 24H2 (сборка 26100.8894)" Foreground="#4FA89A" Margin="0,2,0,12"/>
+
+                    <TextBlock Text="Назначение:" FontWeight="Bold" Foreground="#B0A499"/>
+                    <TextBlock Text="Приложение показывает HotFix и дополнительные пакеты CBS. Откат выполняется штатными DISM и WUSA; защищённые или постоянные пакеты Windows могут не сниматься."
+                               TextWrapping="Wrap" Foreground="#8F8379" Margin="0,2,0,14"/>
+
+                    <Border Background="#1F1A17" BorderBrush="#3D322A" BorderThickness="1" CornerRadius="4" Padding="10">
+                        <StackPanel>
+                            <TextBlock Text="Официальный Telegram-канал:" FontWeight="Bold" Foreground="#E8823F"/>
+                            <TextBlock Text="https://t.me/TriagedRust" Foreground="#4FA89A" FontWeight="SemiBold" Cursor="Hand" MouseLeftButtonDown="TelegramLink_Click" Margin="0,2,0,0"/>
+                            <TextBlock Text="Помощь с дампами, синими экранами и обновлениями." FontSize="10" Foreground="#8F8379" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </TabItem>
+        </TabControl>
+
+        <!-- Footer -->
+        <Button Grid.Row="2" Content="Закрыть" Click="BtnClose_Click" Background="#261F1B" Foreground="#EFE7DE" BorderBrush="#3D322A" Padding="16,6" HorizontalAlignment="Right" Margin="0,12,0,0" Cursor="Hand"/>
+    </Grid>
+</Window>
