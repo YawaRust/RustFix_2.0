@@ -1,0 +1,105 @@
+# ============================================================
+#  RustFix by yawaside · сборка портативного RustFix.exe
+#
+#  Запускается ПРИ КАЖДОМ PUSH в main/master (а также вручную
+#  и по тегу v*). Результат ВСЕГДА публикуется в Releases:
+#   - по тегу v1.5.0        -> релиз "v1.5.0"
+#   - по обычному push      -> релиз "v1.5.<номер сборки>"
+#
+#  Скачать: страница Releases -> RustFix.exe (один файл,
+#  установка не нужна, запуск двойным кликом + UAC).
+# ============================================================
+name: Build RustFix.exe (portable)
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-exe:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # Windows PowerShell 5.1: System.Drawing is guaranteed to be available there.
+      - name: Generate RustFix application icon
+        shell: powershell
+        continue-on-error: true
+        run: .\src-exe\Build-Icon.ps1
+
+      - name: Publish single-file RustFix.exe
+        shell: pwsh
+        run: |
+          dotnet publish src-exe/RustFix.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -o dist-exe
+          Get-ChildItem dist-exe
+
+      - name: Verify exe exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist-exe/RustFix.exe)) {
+            Write-Error "RustFix.exe не собрался!"
+            exit 1
+          }
+          $size = (Get-Item dist-exe/RustFix.exe).Length / 1MB
+          Write-Host ("RustFix.exe готов: {0:N1} МБ" -f $size)
+
+      - name: Upload artifact (RustFix.exe)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RustFix-exe
+          path: dist-exe/RustFix.exe
+
+      # Версия релиза: тег, если есть; иначе автоверсия от номера запуска
+      - name: Compute release tag
+        id: tag
+        shell: pwsh
+        run: |
+          if ("${{ github.ref }}".StartsWith("refs/tags/")) {
+            "value=${{ github.ref_name }}" >> $env:GITHUB_OUTPUT
+          } else {
+            "value=v1.5.${{ github.run_number }}" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Publish to GitHub Releases (always)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.value }}
+          target_commitish: ${{ github.sha }}
+          name: RustFix ${{ steps.tag.outputs.value }} · Portable EXE
+          files: dist-exe/RustFix.exe
+          body: |
+            ## RustFix by yawaside — портативное EXE-приложение
+
+            **Один файл `RustFix.exe`. Установка не требуется.**
+
+            1. Скачайте `RustFix.exe` ниже (Assets).
+            2. Запустите двойным кликом и подтвердите запрос UAC.
+            3. Приложение **само просканирует систему**: определит сборку Windows,
+               найдёт все установленные обновления (включая скрытые пакеты CBS/DISM)
+               и позволит удалить их одной кнопкой — гарантированно, в 3 уровня
+               (wusa → DISM → зачистка кэша).
+            4. Пауза/отключение обновлений и восстановление — в «Настройках».
+
+            Целевой стабильный билд: **Windows 11 24H2 · 26100.8894**
+            Если откат не удался — в приложении есть инструкция по переустановке
+            со ссылкой на официальный образ.
+
+            Канал: https://t.me/TriagedRust
