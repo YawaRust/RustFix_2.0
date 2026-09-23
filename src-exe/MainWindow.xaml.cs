@@ -1,0 +1,680 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Management;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Input;
+using System.Windows.Media;
+using Microsoft.Win32;
+
+namespace RustFix
+{
+    public sealed class UpdateItem : INotifyPropertyChanged
+    {
+        private bool _isSelected;
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value) return;
+                _isSelected = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+            }
+        }
+
+        public bool CanRemove { get; set; }
+        public bool IsHidden { get; set; }
+        public string KbNumber { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string PackageType { get; set; } = "";
+        public string InstallDate { get; set; } = "";
+        public string RemovalStatus { get; set; } = "";
+        public string FullPackageName { get; set; } = "";
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+    }
+
+    public partial class MainWindow : Window
+    {
+        private const int TargetMajor = 26100;
+        private const int TargetUbr = 8894;
+        private const string TelegramUrl = "https://t.me/TriagedRust";
+
+        public ObservableCollection<UpdateItem> Updates { get; } = new();
+
+        private ICollectionView? _view;
+        private string _filter = "all";
+
+        public MainWindow()
+        {
+            InitializeComponent();
+
+            _view = CollectionViewSource.GetDefaultView(Updates);
+            _view.Filter = FilterPredicate;
+            GridUpdates.ItemsSource = _view;
+
+            Loaded += async (_, _) => await AutoScanSystemAsync();
+        }
+
+        private bool FilterPredicate(object candidate)
+        {
+            if (candidate is not UpdateItem item) return false;
+            return _filter switch
+            {
+                "kb" => !item.IsHidden,
+                "hidden" => item.IsHidden,
+                "removable" => item.CanRemove,
+                _ => true
+            };
+        }
+
+        private void Filter_Checked(object sender, RoutedEventArgs e)
+        {
+            if (sender is not RadioButton button || _view == null) return;
+            _filter = button.Tag?.ToString() ?? "all";
+            _view.Refresh();
+            RefreshCount();
+        }
+
+        private void UpdateFilterCaptions()
+        {
+            int all = Updates.Count;
+            int hidden = Updates.Count(item => item.IsHidden);
+            FilterAll.Content = $"Все ({all})";
+            FilterKb.Content = $"Обычные KB ({all - hidden})";
+            FilterHidden.Content = $"Скрытые CBS ({hidden})";
+            FilterRemovable.Content = $"Можно удалить ({Updates.Count(item => item.CanRemove)})";
+        }
+
+        private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ClickCount == 2)
+            {
+                WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+                return;
+            }
+            DragMove();
+        }
+
+        private void BtnMinimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+        private void BtnClose_Click(object sender, RoutedEventArgs e) => Close();
+
+        private async Task AutoScanSystemAsync()
+        {
+            TxtStatus.Text = "Автоматическое сканирование сборки и установленных пакетов...";
+            ProgBar.Visibility = Visibility.Visible;
+            BtnDeleteUpdates.IsEnabled = false;
+            BtnRescan.IsEnabled = false;
+            Updates.Clear();
+
+            try
+            {
+                SetBuildVerdict();
+                var found = await Task.Run(ScanInstalledUpdates);
+
+                foreach (var item in found)
+                {
+                    item.PropertyChanged += (_, args) =>
+                    {
+                        if (args.PropertyName == nameof(UpdateItem.IsSelected)) RefreshCount();
+                    };
+                    Updates.Add(item);
+                }
+
+                _view?.Refresh();
+                RefreshCount();
+                TxtStatus.Text = found.Count == 0
+                    ? "Не удалось обнаружить удаляемые обновления. Нажмите «Обновить список» для повторной проверки."
+                    : "Сканирование завершено: показаны обычные KB и скрытые пакеты CBS/DISM.";
+            }
+            catch (Exception ex)
+            {
+                TxtStatus.Text = "Ошибка сканирования: " + ex.Message;
+            }
+            finally
+            {
+                ProgBar.Visibility = Visibility.Collapsed;
+                BtnDeleteUpdates.IsEnabled = true;
+                BtnRescan.IsEnabled = true;
+            }
+        }
+
+        private void SetBuildVerdict()
+        {
+            string currentBuild = "—";
+            int major = 0;
+            int ubr = 0;
+
+            try
+            {
+                using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+                var b = key?.GetValue("CurrentBuild")?.ToString() ?? "0";
+                major = int.TryParse(b, out var parsed) ? parsed : 0;
+                ubr = Convert.ToInt32(key?.GetValue("UBR") ?? 0);
+                currentBuild = $"{b}.{ubr}";
+            }
+            catch { }
+
+            TxtDetectedBuild.Text = currentBuild;
+
+            if (major == TargetMajor && ubr == TargetUbr)
+            {
+                SetBadge("✓ БИЛД СТАБИЛЕН", "#4FA89A", "#153A34");
+                TxtBuildAdvice.Text = "Ваша система соответствует стабильной Windows 11 24H2 (26100.8894). Откат не требуется.";
+            }
+            else if (major != TargetMajor)
+            {
+                SetBadge("✕ ДРУГАЯ ВЕРСИЯ", "#E8823F", "#311A13");
+                TxtBuildAdvice.Text = $"Установлена ветка {major}, а нужна 26100 / 24H2. Откат KB не заменит переустановку другой версии Windows.";
+            }
+            else if (ubr < TargetUbr)
+            {
+                SetBadge("⚠ НИЖЕ ЭТАЛОНА", "#E0A32E", "#312714");
+                TxtBuildAdvice.Text = $"Сборка отстаёт от эталона на {TargetUbr - ubr} UBR. В списке ниже можно снять проблемные последние пакеты.";
+            }
+            else
+            {
+                SetBadge("⚠ ВЫШЕ ЭТАЛОНА", "#E8823F", "#311A13");
+                TxtBuildAdvice.Text = $"Сборка новее стабильной на {ubr - TargetUbr} UBR. Отметьте последние накопительные пакеты для отката.";
+            }
+        }
+
+        private void SetBadge(string text, string foreground, string background)
+        {
+            TxtVerdictBadge.Text = text;
+            TxtVerdictBadge.Foreground = Brush(foreground);
+            BadgeVerdict.Background = Brush(background);
+            BadgeVerdict.BorderBrush = Brush(foreground);
+        }
+
+        private static SolidColorBrush Brush(string hex) =>
+            (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!;
+
+        private List<UpdateItem> ScanInstalledUpdates()
+        {
+            var result = new List<UpdateItem>();
+            var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // 1. Обычные обновления Windows (WMI): наиболее понятны для пользователя.
+            try
+            {
+                using var searcher = new ManagementObjectSearcher(
+                    "SELECT HotFixID, Description, InstalledOn FROM Win32_QuickFixEngineering");
+
+                foreach (ManagementObject obj in searcher.Get())
+                {
+                    var kb = obj["HotFixID"]?.ToString()?.Trim() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(kb)) continue;
+
+                    string rawDate = obj["InstalledOn"]?.ToString() ?? string.Empty;
+                    string date = DateTime.TryParse(rawDate, out var parsed)
+                        ? parsed.ToString("yyyy-MM-dd")
+                        : (string.IsNullOrEmpty(rawDate) ? "—" : rawDate);
+
+                    string rawKind = obj["Description"]?.ToString()?.Trim() ?? string.Empty;
+                    result.Add(new UpdateItem
+                    {
+                        IsSelected = true,
+                        CanRemove = true,
+                        IsHidden = false,
+                        KbNumber = kb,
+                        Title = FriendlyHotFixTitle(rawKind),
+                        Description = $"Пакет {kb} из Центра обновления Windows · установлен {date} · снимается через wusa и DISM",
+                        PackageType = "KB (HotFix)",
+                        InstallDate = date,
+                        RemovalStatus = "Можно удалить"
+                    });
+                    identities.Add(kb);
+                }
+            }
+            catch { }
+
+            // 2. Скрытые пакеты CBS/WinSxS: DISM через Get-WindowsPackage.
+            // JSON вместо текстовой таблицы DISM: не зависит от языка Windows.
+            try
+            {
+                const string command = "Get-WindowsPackage -Online | Where-Object {$_.PackageState -eq 'Installed'} | Select-Object PackageName,ReleaseType,InstallTime | ConvertTo-Json -Compress";
+                string json = RunProcess("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command);
+
+                if (!string.IsNullOrWhiteSpace(json))
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    var packages = doc.RootElement.ValueKind == JsonValueKind.Array
+                        ? doc.RootElement.EnumerateArray().ToArray()
+                        : new[] { doc.RootElement };
+
+                    foreach (var package in packages)
+                    {
+                        if (!package.TryGetProperty("PackageName", out var nameNode)) continue;
+                        string packageName = nameNode.GetString() ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(packageName) || !LooksLikeUpdatePackage(packageName)) continue;
+
+                        string releaseType = package.TryGetProperty("ReleaseType", out var releaseNode)
+                            ? releaseNode.GetString() ?? "CBS"
+                            : "CBS";
+                        string installDate = package.TryGetProperty("InstallTime", out var timeNode)
+                            ? FormatInstallDate(timeNode)
+                            : "Системный";
+
+                        bool protectedComponent = IsProtectedComponent(packageName);
+                        var kbMatch = Regex.Match(packageName, @"KB\d{5,9}", RegexOptions.IgnoreCase);
+                        string kb = kbMatch.Success ? kbMatch.Value.ToUpperInvariant() : "CBS-компонент";
+
+                        // Не добавляем точную копию уже найденного пакета, но CBS-версию KB показываем.
+                        string identity = "CBS:" + packageName;
+                        if (!identities.Add(identity)) continue;
+
+                        result.Add(new UpdateItem
+                        {
+                            IsSelected = !protectedComponent && kbMatch.Success,
+                            CanRemove = !protectedComponent && kbMatch.Success,
+                            IsHidden = true,
+                            KbNumber = kb,
+                            Title = FriendlyPackageTitle(packageName, releaseType),
+                            Description = packageName,
+                            PackageType = protectedComponent ? "Защищённый CBS" : "Скрытый CBS / DISM",
+                            InstallDate = installDate,
+                            FullPackageName = packageName,
+                            RemovalStatus = protectedComponent ? "Защищено Windows" : (kbMatch.Success ? "Можно попробовать снять" : "Только просмотр")
+                        });
+                    }
+                }
+            }
+            catch { }
+
+            return result
+                .OrderByDescending(item => item.CanRemove)
+                .ThenByDescending(item => item.InstallDate)
+                .Take(120)
+                .ToList();
+        }
+
+        private static string FriendlyHotFixTitle(string rawKind)
+        {
+            if (rawKind.Equals("Security Update", StringComparison.OrdinalIgnoreCase))
+                return "Обновление безопасности Windows";
+            if (rawKind.Equals("Update", StringComparison.OrdinalIgnoreCase))
+                return "Накопительное обновление Windows";
+            if (rawKind.Equals("Hotfix", StringComparison.OrdinalIgnoreCase))
+                return "Исправление Microsoft (Hotfix)";
+            if (rawKind.Equals("Service Pack", StringComparison.OrdinalIgnoreCase))
+                return "Пакет обновления (Service Pack)";
+            return string.IsNullOrWhiteSpace(rawKind) ? "Обновление Windows" : rawKind;
+        }
+
+        private static string FriendlyPackageTitle(string packageName, string releaseType)
+        {
+            if (packageName.Contains("RollupFix", StringComparison.OrdinalIgnoreCase))
+                return "Накопительный пакет исправлений (Rollup)";
+            if (packageName.Contains("ServicingStack", StringComparison.OrdinalIgnoreCase))
+                return "Стек обслуживания Windows (SSU)";
+            if (packageName.Contains("LanguagePack", StringComparison.OrdinalIgnoreCase))
+                return "Языковой пакет Windows";
+            if (packageName.Contains("NetFx", StringComparison.OrdinalIgnoreCase) ||
+                packageName.Contains("DotNet", StringComparison.OrdinalIgnoreCase))
+                return "Компонент .NET Framework";
+            if (packageName.Contains("Defender", StringComparison.OrdinalIgnoreCase))
+                return "Платформа Microsoft Defender";
+            if (packageName.Contains("Cumulative", StringComparison.OrdinalIgnoreCase))
+                return "Кумулятивный компонент Windows";
+            if (!string.IsNullOrWhiteSpace(releaseType) &&
+                releaseType.Contains("Update", StringComparison.OrdinalIgnoreCase))
+                return "Скрытый пакет обновления CBS";
+            return "Системный компонент CBS";
+        }
+
+        private static bool LooksLikeUpdatePackage(string packageName)
+        {
+            return packageName.Contains("KB", StringComparison.OrdinalIgnoreCase)
+                || packageName.Contains("RollupFix", StringComparison.OrdinalIgnoreCase)
+                || packageName.Contains("ServicingStack", StringComparison.OrdinalIgnoreCase)
+                || packageName.Contains("Cumulative", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsProtectedComponent(string packageName)
+        {
+            string[] protectedTerms =
+            {
+                "ServicingStack", "Foundation", "LanguagePack", "FeaturesOnDemand",
+                "WinPE", "Client-Desktop-Required-Package"
+            };
+            return protectedTerms.Any(term => packageName.Contains(term, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string FormatInstallDate(JsonElement element)
+        {
+            string raw = element.ToString();
+            return DateTime.TryParse(raw, out var date) ? date.ToString("yyyy-MM-dd") : "Системный";
+        }
+
+        private static string RunProcess(string fileName, params string[] arguments)
+        {
+            var info = new ProcessStartInfo(fileName)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            foreach (var argument in arguments) info.ArgumentList.Add(argument);
+
+            using var process = Process.Start(info);
+            if (process == null) return string.Empty;
+            string stdout = process.StandardOutput.ReadToEnd();
+            process.WaitForExit(90_000);
+            return stdout;
+        }
+
+        private static int RunProcessWithExitCode(string fileName, params string[] arguments)
+        {
+            var info = new ProcessStartInfo(fileName)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            foreach (var argument in arguments) info.ArgumentList.Add(argument);
+            using var process = Process.Start(info);
+            if (process == null) return -1;
+            process.WaitForExit(180_000);
+            return process.ExitCode;
+        }
+
+        private async void BtnDeleteUpdates_Click(object sender, RoutedEventArgs e)
+        {
+            var chosen = Updates.Where(item => item.IsSelected && item.CanRemove).ToList();
+            if (chosen.Count == 0)
+            {
+                MessageBox.Show("Отметьте хотя бы одно доступное обновление.", "RustFix by yawaside", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var answer = MessageBox.Show(
+                $"Удалить {chosen.Count} выбранных обновлений?\n\nRustFix остановит службы обновления, снимет пакеты через wusa/DISM и очистит кэш Центра обновления.",
+                "Подтвердите удаление",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (answer != MessageBoxResult.Yes) return;
+
+            BtnDeleteUpdates.IsEnabled = false;
+            BtnRescan.IsEnabled = false;
+            ProgBar.Visibility = Visibility.Visible;
+            bool fullMode = ChkThreeLayer.IsChecked == true;
+            var results = new List<RemovalResult>();
+
+            try
+            {
+                await Task.Run(() =>
+                {
+                    Dispatcher.Invoke(() => TxtStatus.Text = "Создание точки восстановления...");
+                    TryCreateRestorePoint();
+
+                    Dispatcher.Invoke(() => TxtStatus.Text = "Остановка служб Windows Update...");
+                    foreach (var service in new[] { "wuauserv", "bits", "UsoSvc", "DoSvc" })
+                    {
+                        TryRun("net.exe", "stop", service, "/y");
+                    }
+
+                    // HotFix-записи не содержат имени CBS-пакета: достаём его заранее,
+                    // иначе для них был бы доступен только wusa, который на 24H2 часто отказывает.
+                    Dispatcher.Invoke(() => TxtStatus.Text = "Сопоставление KB с пакетами хранилища компонентов...");
+                    var packageMap = LoadPackageMap();
+
+                    int index = 0;
+                    foreach (var item in chosen)
+                    {
+                        index++;
+                        int current = index;
+                        Dispatcher.Invoke(() => TxtStatus.Text = $"Удаление {current} из {chosen.Count}: {item.KbNumber}...");
+                        results.Add(RemoveOne(item, packageMap));
+                    }
+
+                    if (fullMode)
+                    {
+                        Dispatcher.Invoke(() => TxtStatus.Text = "Очистка кэша Центра обновления...");
+                        ClearUpdateCache();
+                        // No ResetBase here: it would make other installed packages impossible to uninstall.
+                        TryRun("dism.exe", "/Online", "/Cleanup-Image", "/StartComponentCleanup", "/Quiet", "/NoRestart");
+                    }
+
+                    foreach (var service in new[] { "wuauserv", "bits", "UsoSvc" })
+                    {
+                        TryRun("net.exe", "start", service);
+                    }
+                });
+
+                ShowRemovalReport(results);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Ошибка при обработке обновлений: " + ex.Message, "RustFix by yawaside", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                ProgBar.Visibility = Visibility.Collapsed;
+                BtnDeleteUpdates.IsEnabled = true;
+                BtnRescan.IsEnabled = true;
+                await AutoScanSystemAsync();
+            }
+        }
+
+        private sealed record RemovalResult(string Kb, bool Success, bool NeedsReboot, string Detail);
+
+        /// <summary>
+        /// Снятие одного пакета: DISM по точному имени пакета, затем wusa по номеру KB,
+        /// затем контрольная проверка — пакет мог уйти в состояние "ожидает перезагрузки".
+        /// </summary>
+        private static RemovalResult RemoveOne(UpdateItem item, IReadOnlyDictionary<string, string> packageMap)
+        {
+            string kbDigits = Regex.Replace(item.KbNumber, "\\D", string.Empty);
+            string packageName = item.FullPackageName;
+
+            if (string.IsNullOrWhiteSpace(packageName) && kbDigits.Length > 0)
+            {
+                packageMap.TryGetValue(kbDigits, out var resolved);
+                packageName = resolved ?? string.Empty;
+            }
+
+            var attempts = new List<string>();
+            bool needsReboot = false;
+
+            if (!string.IsNullOrWhiteSpace(packageName))
+            {
+                int code = RunProcessWithExitCode("dism.exe", "/Online", "/Remove-Package",
+                    "/PackageName:" + packageName, "/NoRestart", "/Quiet");
+                attempts.Add("DISM " + FormatCode(code));
+                if (code == 3010) needsReboot = true;
+                if (IsSuccessCode(code))
+                    return new RemovalResult(item.KbNumber, true, needsReboot, string.Join(" · ", attempts));
+            }
+
+            if (kbDigits.Length > 0)
+            {
+                int code = RunProcessWithExitCode("wusa.exe", "/uninstall", "/kb:" + kbDigits, "/quiet", "/norestart");
+                attempts.Add("wusa " + FormatCode(code));
+                if (code == 3010) needsReboot = true;
+                if (IsSuccessCode(code))
+                    return new RemovalResult(item.KbNumber, true, needsReboot, string.Join(" · ", attempts));
+            }
+
+            if (!IsStillInstalled(kbDigits, packageName))
+                return new RemovalResult(item.KbNumber, true, true, "снят, ожидает перезагрузки");
+
+            if (attempts.Count == 0) attempts.Add("нет доступного способа снятия");
+            return new RemovalResult(item.KbNumber, false, false, string.Join(" · ", attempts));
+        }
+
+        private static bool IsSuccessCode(int code) => code == 0 || code == 3010 || code == 1641;
+
+        private static string FormatCode(int code) =>
+            code == 0 ? "OK" : (code == 3010 ? "нужна перезагрузка" : $"код 0x{code:X8}");
+
+        /// <summary>KB → точное имя пакета CBS, чтобы DISM мог снять обычные HotFix-обновления.</summary>
+        private static Dictionary<string, string> LoadPackageMap()
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                const string command = "Get-WindowsPackage -Online | Where-Object {$_.PackageState -eq 'Installed'} | Select-Object -ExpandProperty PackageName";
+                string output = RunProcess("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command);
+
+                foreach (var line in output.Split('\n'))
+                {
+                    string name = line.Trim();
+                    if (name.Length == 0) continue;
+                    var match = Regex.Match(name, @"KB(\d{5,9})", RegexOptions.IgnoreCase);
+                    if (match.Success) map.TryAdd(match.Groups[1].Value, name);
+                }
+            }
+            catch { }
+            return map;
+        }
+
+        /// <summary>Контрольная проверка после удаления (учитывает состояние UninstallPending).</summary>
+        private static bool IsStillInstalled(string kbDigits, string packageName)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(packageName))
+                {
+                    string safeName = packageName.Replace("'", "''");
+                    string state = RunProcess("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                        $"try {{ (Get-WindowsPackage -Online -PackageName '{safeName}' -ErrorAction Stop).PackageState }} catch {{ 'Absent' }}");
+
+                    if (!string.IsNullOrWhiteSpace(state))
+                        return state.Trim().Equals("Installed", StringComparison.OrdinalIgnoreCase);
+                }
+
+                if (kbDigits.Length > 0)
+                {
+                    string found = RunProcess("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                        $"if (Get-HotFix -Id KB{kbDigits} -ErrorAction SilentlyContinue) {{ 'yes' }} else {{ 'no' }}");
+                    return found.Trim().Equals("yes", StringComparison.OrdinalIgnoreCase);
+                }
+            }
+            catch { }
+
+            return true;
+        }
+
+        private void ShowRemovalReport(List<RemovalResult> results)
+        {
+            int removed = results.Count(r => r.Success);
+            int failed = results.Count - removed;
+            bool reboot = results.Any(r => r.Success && r.NeedsReboot);
+
+            var text = new StringBuilder();
+            text.AppendLine($"Обработано пакетов: {results.Count}");
+            text.AppendLine($"Успешно снято: {removed}");
+            if (failed > 0) text.AppendLine($"Не удалось снять: {failed}");
+            text.AppendLine();
+
+            foreach (var item in results.Take(14))
+                text.AppendLine($"{(item.Success ? "✓" : "✕")} {item.Kb} — {item.Detail}");
+
+            if (results.Count > 14)
+                text.AppendLine($"…и ещё {results.Count - 14}");
+
+            text.AppendLine();
+            text.AppendLine(reboot || removed > 0
+                ? "Перезагрузите компьютер, чтобы снятие вступило в силу, затем включите паузу в «Настройках»."
+                : "Изменений не внесено.");
+
+            if (failed > 0)
+                text.AppendLine("Оставшиеся пакеты защищены Windows — используйте раздел «Если откат не помог» в Настройках.");
+
+            MessageBox.Show(text.ToString(), "RustFix by yawaside", MessageBoxButton.OK,
+                failed > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+        }
+
+        private static void TryCreateRestorePoint()
+        {
+            try
+            {
+                RunProcess("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                    "try { Checkpoint-Computer -Description 'RustFix before update removal' -RestorePointType MODIFY_SETTINGS -ErrorAction Stop } catch { }");
+            }
+            catch { }
+        }
+
+        private static void ClearUpdateCache()
+        {
+            try
+            {
+                string download = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SoftwareDistribution", "Download");
+                if (Directory.Exists(download))
+                {
+                    foreach (var path in Directory.EnumerateFileSystemEntries(download))
+                    {
+                        try
+                        {
+                            if (Directory.Exists(path)) Directory.Delete(path, true);
+                            else File.Delete(path);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private static void TryRun(string fileName, params string[] arguments)
+        {
+            try { RunProcessWithExitCode(fileName, arguments); } catch { }
+        }
+
+        private async void BtnRescan_Click(object sender, RoutedEventArgs e) => await AutoScanSystemAsync();
+
+        private void BtnSelectAll_Click(object sender, RoutedEventArgs e)
+        {
+            // Действует только на то, что реально видно в текущем фильтре.
+            foreach (var item in VisibleItems().Where(item => item.CanRemove)) item.IsSelected = true;
+            RefreshCount();
+        }
+
+        private void BtnDeselectAll_Click(object sender, RoutedEventArgs e)
+        {
+            foreach (var item in VisibleItems()) item.IsSelected = false;
+            RefreshCount();
+        }
+
+        private IEnumerable<UpdateItem> VisibleItems() =>
+            _view?.Cast<UpdateItem>().ToList() ?? Updates.ToList();
+
+        private void RefreshCount()
+        {
+            int selected = Updates.Count(item => item.IsSelected && item.CanRemove);
+            int protectedCount = Updates.Count(item => !item.CanRemove);
+            int shown = VisibleItems().Count();
+
+            TxtSelectedCount.Text =
+                $"Показано: {shown} из {Updates.Count} · Выбрано: {selected}" +
+                (protectedCount > 0 ? $" · Защищено: {protectedCount}" : string.Empty);
+
+            UpdateFilterCaptions();
+        }
+
+        private void BtnTelegram_Click(object sender, RoutedEventArgs e)
+        {
+            try { Process.Start(new ProcessStartInfo(TelegramUrl) { UseShellExecute = true }); } catch { }
+        }
+
+        private void BtnSettings_Click(object sender, RoutedEventArgs e)
+        {
+            var window = new SettingsWindow { Owner = this };
+            window.ShowDialog();
+        }
+    }
+}

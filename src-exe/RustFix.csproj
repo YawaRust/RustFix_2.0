@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>RustFix</AssemblyName>
+    <RootNamespace>RustFix</RootNamespace>
+    <AssemblyTitle>RustFix by yawaside</AssemblyTitle>
+    <Product>RustFix</Product>
+    <Version>1.5.0</Version>
+
+    <!-- Портативный single-file EXE: всё внутри одного файла, установка не нужна -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WMI-сканирование установленных обновлений (Win32_QuickFixEngineering) -->
+    <PackageReference Include="System.Management" Version="8.0.0" />
+    <Resource Include="Assets\RustFix.jpg" />
+  </ItemGroup>
+
+  <!-- The .ico is generated from the source artwork before compilation.
+       If generation fails the build still succeeds, just without the exe icon. -->
+  <Target Name="CreateRustFixIcon" BeforeTargets="PrepareForBuild">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Build-Icon.ps1&quot;"
+          ContinueOnError="true" />
+    <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\Assets\RustFix.ico')">
+      <ApplicationIcon>$(MSBuildProjectDirectory)\Assets\RustFix.ico</ApplicationIcon>
+    </PropertyGroup>
+  </Target>
+
+</Project>
