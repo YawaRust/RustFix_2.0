@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@theme {
+  --color-steel-950: #131010;
+  --color-steel-900: #1a1614;
+  --color-steel-850: #211c19;
+  --color-steel-800: #2a231e;
+  --color-line: #3a312a;
+  --color-bone: #efe7de;
+  --color-ash: #9c9088;
+  --color-rust: #c75b24;
+  --color-rust-bright: #e8823f;
+  --color-rust-deep: #8a3a16;
+  --color-patina: #4fa89a;
+  --color-amber: #e0a32e;
+  --color-stamp: #b3391a;
+
+  --font-display: "Oswald", "Arial Narrow", sans-serif;
+  --font-body: "Barlow", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    background-color: var(--color-steel-950);
+    color: var(--color-bone);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
+  section[id] {
+    scroll-margin-top: 5.5rem;
+  }
+  ::selection {
+    background: var(--color-rust);
+    color: #fff;
+  }
+  input,
+  button {
+    font-family: inherit;
+  }
+  input:focus-visible,
+  button:focus-visible,
+  a:focus-visible {
+    outline: 2px solid var(--color-rust-bright);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  .grain::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 60;
+    opacity: 0.5;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.42'/%3E%3C/svg%3E");
+  }
+  .engraved {
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.75);
+  }
+  .window-inset {
+    box-shadow:
+      inset 0 2px 10px rgba(0, 0, 0, 0.85),
+      inset 0 0 0 1px rgba(0, 0, 0, 0.6),
+      0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .scroll-slim::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  .scroll-slim::-webkit-scrollbar-track {
+    background: #131010;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb {
+    background: #3a312a;
+    border: 2px solid #131010;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb:hover {
+    background: var(--color-rust-deep);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
